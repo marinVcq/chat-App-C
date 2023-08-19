@@ -233,14 +233,15 @@ unsigned int WINAPI ClientThread(LPVOID lpParam) {
             printf("recv Failed (Username availability): %d\n", WSAGetLastError());
             break;
         }
+        memset(recvbuf, 0, sizeof(recvbuf));
     }
     
     do {
         iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
 
         if (iResult > 0) {
-            printf("Bytes received: %d\n", iResult);
-            printf("Client: %s\n", recvbuf);
+            recvbuf[iResult] = '\0'; // Ensure proper null-termination
+            printf("Received Message: %s\n", recvbuf);
 
             // Broadcast the received message to all other clients
             for (int j = 0; j < numClients; j++) {
@@ -254,26 +255,16 @@ unsigned int WINAPI ClientThread(LPVOID lpParam) {
                         *newlinePos = '\0';
                     }
 
-                    // Concatenate username and recvbuf without any separation
-                    strcpy(broadcastMessage, client->username);
-                    strcat(broadcastMessage, ": ");
-                    strcat(broadcastMessage, recvbuf);
+                    // Construct the broadcast message with the sender's username and the received message
+                    snprintf(broadcastMessage, sizeof(broadcastMessage), "%s: %s", client->username, recvbuf);
 
-
-                    // snprintf(broadcastMessage, sizeof(broadcastMessage), "%s:%s", client->username, recvbuf);
-                    // // Remove newline character from the sender's username
-                    // char* newlinePos = strchr(broadcastMessage, '\n');
-                    // if (newlinePos != NULL) {
-                    //     *newlinePos = '\0';
-                    // }
-                    printf("broadcast: %s\n", broadcastMessage);
-
-                    iSendResult = send(clientList[j].socket, broadcastMessage,strlen(broadcastMessage), 0);
+                    iSendResult = send(clientList[j].socket, broadcastMessage, strlen(broadcastMessage), 0);
                     if (iSendResult == SOCKET_ERROR) {
                         printf("Send Failed: %d\n", WSAGetLastError());
                     } else {
                         printf("Bytes sent: %d\n", iSendResult);
                     }
+                    memset(broadcastMessage, 0, sizeof(broadcastMessage));
                 }
             }
         } else if (iResult == 0) {
@@ -281,10 +272,11 @@ unsigned int WINAPI ClientThread(LPVOID lpParam) {
         } else {
             printf("recv Failed (ClientThread): %d\n", WSAGetLastError());
         }
-    } while (iResult > 0);
+    }  while (iResult > 0);
+
+    EnterCriticalSection(&csClients);
 
     // Remove the client socket from the list
-    EnterCriticalSection(&csClients);
     for (int i = 0; i < numClients; i++) {
         if (clientList[i].socket == ClientSocket) {
             for (int j = i; j < numClients - 1; j++) {

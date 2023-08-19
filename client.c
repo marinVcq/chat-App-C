@@ -9,17 +9,17 @@
 unsigned int WINAPI ReceiveThread(LPVOID lpParam);
 unsigned int WINAPI SendThread(LPVOID lpParam);
 
-HANDLE promptMutex; 
 HANDLE recvThread;
 HANDLE sendThread;
+HANDLE consoleMutex;
 
 int main() {
     WSADATA wsaData;
     SOCKET ConnectSocket = INVALID_SOCKET;
     struct sockaddr_in serverAddr;
     int iResult;
-    promptMutex = CreateMutex(NULL, FALSE, NULL);
-
+    consoleMutex = CreateMutex(NULL, FALSE, NULL);
+    setbuf(stdout, NULL);
 
     // Initialize Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -111,6 +111,9 @@ int main() {
 
     // Cleanup and close the socket
     closesocket(ConnectSocket);
+    CloseHandle(recvThread);
+    CloseHandle(sendThread);
+    CloseHandle(consoleMutex);
     WSACleanup();
     return 0;
 }
@@ -125,18 +128,26 @@ unsigned int WINAPI ReceiveThread(LPVOID lpParam) {
         iResult = recv(ConnectSocket, recvbuf, DEFAULT_BUFLEN, 0);
         if (iResult > 0) {
             recvbuf[iResult] = '\0';
-            printf("\n%s", recvbuf);
+            printf("\n%s",recvbuf);
 
-            // Terminate and recreate the SendThread
-            TerminateThread(sendThread, 0); // Use with caution
-            sendThread = (HANDLE)_beginthreadex(NULL, 0, SendThread, &ConnectSocket, 0, NULL);
+
+            // Lock the mutex to prevent conflicts with console output
+            WaitForSingleObject(consoleMutex, INFINITE);
             
-            WaitForSingleObject(promptMutex, INFINITE);
-
+            printf("\n%s",recvbuf);
             fflush(stdout);
 
-            ReleaseMutex(promptMutex);
+            // Release the mutex to allow other threads to access the console
+            ReleaseMutex(consoleMutex);
 
+            // Recreate the SendThread
+            HANDLE newSendThread = (HANDLE)_beginthreadex(NULL, 0, SendThread, &ConnectSocket, 0, NULL);
+            if (newSendThread != NULL) {
+                // Close the old sendThread handle
+                CloseHandle(sendThread);
+                sendThread = newSendThread;
+            }
+            memset(recvbuf, 0, sizeof(recvbuf));
         } else if (iResult == 0) {
             printf("Connection closed by server.\n");
             break;
@@ -156,22 +167,22 @@ unsigned int WINAPI SendThread(LPVOID lpParam) {
     char sendbuf[DEFAULT_BUFLEN];
 
     while (1) {
-        WaitForSingleObject(promptMutex, INFINITE);
-        printf("Enter message: ");
+        WaitForSingleObject(consoleMutex, INFINITE);
+        printf("You: ");
+        ReleaseMutex(consoleMutex);
+
         fgets(sendbuf, DEFAULT_BUFLEN, stdin);
-        ReleaseMutex(promptMutex);
+        fflush(stdout);
 
         // Send data to the server
         int iResult = send(ConnectSocket, sendbuf, strlen(sendbuf), 0);
         if (iResult == SOCKET_ERROR) {
             printf("Send failed: %d\n", WSAGetLastError());
-            closesocket(ConnectSocket);
-            WSACleanup();
-            return 1;
+            break;
         }
+        memset(sendbuf, 0, sizeof(sendbuf));
     }
 
     return 0;
 }
-
 
