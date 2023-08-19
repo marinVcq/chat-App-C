@@ -94,6 +94,10 @@ Next Step: Advanced Socket programming: https://learn.microsoft.com/en-us/window
 
 
 
+I want to maintain the ability to send multiple messages in a row, even while waiting for messages to be received in the ReceiveThread. To achieve this, we can use a separate thread for sending messages. Here's how you can structure your code:
+
+
+
 
 
 
