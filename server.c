@@ -46,6 +46,15 @@ int iResult, iSendResult;
 int recvbuflen = DEFAULT_BUFLEN;
 int numClients = 0;
 
+// Function
+int printColorText(const char *text, const char *buffer, int colorCode){
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetConsoleTextAttribute(hConsole, colorCode);
+    printf("%s %s",text, buffer);
+    SetConsoleTextAttribute(hConsole, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
+    return 0;
+}
+
 int main(){
 
     wVersionRequested = MAKEWORD(2,2);
@@ -241,7 +250,8 @@ unsigned int WINAPI ClientThread(LPVOID lpParam) {
 
         if (iResult > 0) {
             recvbuf[iResult] = '\0'; // Ensure proper null-termination
-            printf("Received Message: %s\n", recvbuf);
+            // printf("Received Message: %s\n", recvbuf);
+            printColorText("Received Message: ",recvbuf, FOREGROUND_GREEN);
 
             // Broadcast the received message to all other clients
             for (int j = 0; j < numClients; j++) {

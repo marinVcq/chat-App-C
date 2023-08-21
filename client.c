@@ -13,6 +13,14 @@ HANDLE recvThread;
 HANDLE sendThread;
 HANDLE consoleMutex;
 
+int printColorText(const char *text, const char *buffer, int colorCode){
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetConsoleTextAttribute(hConsole, colorCode);
+    printf("%s %s",text, buffer);
+    SetConsoleTextAttribute(hConsole, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
+    return 0;
+}
+
 int main() {
     WSADATA wsaData;
     SOCKET ConnectSocket = INVALID_SOCKET;
@@ -128,13 +136,12 @@ unsigned int WINAPI ReceiveThread(LPVOID lpParam) {
         iResult = recv(ConnectSocket, recvbuf, DEFAULT_BUFLEN, 0);
         if (iResult > 0) {
             recvbuf[iResult] = '\0';
-            printf("\n%s",recvbuf);
-
 
             // Lock the mutex to prevent conflicts with console output
             WaitForSingleObject(consoleMutex, INFINITE);
             
-            printf("\n%s",recvbuf);
+            // printf("\n%s",recvbuf);
+            printColorText("\n",recvbuf, FOREGROUND_BLUE);
             fflush(stdout);
 
             // Release the mutex to allow other threads to access the console
@@ -168,7 +175,7 @@ unsigned int WINAPI SendThread(LPVOID lpParam) {
 
     while (1) {
         WaitForSingleObject(consoleMutex, INFINITE);
-        printf("You: ");
+        printColorText("You: ","", FOREGROUND_GREEN);
         ReleaseMutex(consoleMutex);
 
         fgets(sendbuf, DEFAULT_BUFLEN, stdin);
