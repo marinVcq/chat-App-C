@@ -63,6 +63,8 @@ int main() {
 
     // Authentication loop
     int authenticated = 0;
+    int hasJoinRoom = 0;
+
     while (!authenticated) {
         printf("Enter username: ");
         fgets(sendbuf, DEFAULT_BUFLEN, stdin);
@@ -92,6 +94,35 @@ int main() {
             closesocket(ConnectSocket);
             WSACleanup();
             return 1;
+        }
+    }
+
+    while(!hasJoinRoom){
+        printf("Enter room ID: ");
+        fgets(sendbuf, DEFAULT_BUFLEN, stdin);
+
+        // Send room ID to the server
+        iResult = send(ConnectSocket, sendbuf, strlen(sendbuf), 0);
+        if (iResult == SOCKET_ERROR) {
+            printf("Send room ID failed: %d\n", WSAGetLastError());
+            closesocket(ConnectSocket);
+            WSACleanup();
+            return 1;
+        }
+
+        // Receive room availability response
+        iResult = recv(ConnectSocket, recvbuf, 10, 0);
+        if (iResult > 0) {
+            recvbuf[iResult] = '\0';
+            if (strcmp(recvbuf, "available") == 0) {
+                hasJoinRoom = 1;
+                printf("Welcome. You are now authenticated on Room %s.\n", sendbuf);
+                break;
+            } else {
+                printf("Access denied. Please choose another.\n");
+            }
+        } else {
+            printf("Receive room authorization failed: %d\n", WSAGetLastError());
         }
     }
 

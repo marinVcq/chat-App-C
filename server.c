@@ -24,12 +24,26 @@ int WSAAPI getnameinfo(const struct sockaddr*,socklen_t,char*,DWORD,
 #define DEFAULT_PORT "12345"
 #define DEFAULT_BUFLEN 1024
 #define MAX_CLIENTS 10
+#define MAX_CLIENTS_PER_ROOM 5
+#define MAX_ROOMS 15
 unsigned int WINAPI ClientThread(LPVOID lpParam);
 
 struct clientInfo{
     SOCKET socket;
     char username[DEFAULT_BUFLEN];
+    char room[DEFAULT_BUFLEN]; // Room ID
+    int connectedToRoom;
 };
+
+struct RoomClients{
+    char room[DEFAULT_BUFLEN];
+    char password[DEFAULT_BUFLEN];
+    struct clientInfo clients[MAX_CLIENTS_PER_ROOM];
+    int numClients;
+};
+
+struct RoomClients roomList[MAX_ROOMS];
+
 
 WORD wVersionRequested; 
 WSADATA wsaData;
@@ -45,6 +59,7 @@ char recvbuf[DEFAULT_BUFLEN];
 int iResult, iSendResult;
 int recvbuflen = DEFAULT_BUFLEN;
 int numClients = 0;
+int numRooms = 0;
 
 // Function
 int printColorText(const char *text, const char *buffer, int colorCode){
@@ -56,6 +71,10 @@ int printColorText(const char *text, const char *buffer, int colorCode){
 }
 
 int main(){
+
+    for (int i = 0; i < MAX_ROOMS; i++) {
+        roomList[i].numClients = 0;
+    }
 
     wVersionRequested = MAKEWORD(2,2);
     iResult = WSAStartup(wVersionRequested, &wsaData);
@@ -244,6 +263,85 @@ unsigned int WINAPI ClientThread(LPVOID lpParam) {
         }
         memset(recvbuf, 0, sizeof(recvbuf));
     }
+
+    // Connect to room
+    while(!client->connectedToRoom){
+        iResult = recv(ClientSocket, client->room, DEFAULT_BUFLEN, 0);
+        if (iResult > 0) {
+            int roomExists = 0;
+            int passwordOK = 0;
+
+            // check if room already exist
+            for(int i=0;i<numRooms; i++){
+                if(strcmp(roomList[i].room, client->room) == 0){
+                    roomExists = 1;
+
+                    char temp[] = "available";
+                    send(ClientSocket, temp, sizeof(temp), 0);
+                    
+                    while(!passwordOK){
+                        // If the room exists, ask for the password
+                        char passwordPrompt[] = "Enter room password: ";
+                        send(ClientSocket, passwordPrompt, sizeof(passwordPrompt), 0);
+
+                        char receivedPassword[DEFAULT_BUFLEN];
+                        recv(ClientSocket, receivedPassword, DEFAULT_BUFLEN, 0);
+
+                        if (strcmp(receivedPassword, roomList[i].password) == 0) {
+                            // Password matches, connect the client to the room
+                            client->connectedToRoom = 1;
+                            char serverResponse[] = "Connected";
+                            send(ClientSocket, serverResponse, sizeof(serverResponse), 0);
+                            passwordOK = 1;
+                        } else {
+                            // Password doesn't match, close the connection
+                            char incorrectPasswordMsg[] = "Incorrect password";
+                            send(ClientSocket, incorrectPasswordMsg, sizeof(incorrectPasswordMsg), 0);
+                        }
+                    }
+                   break;                        
+                }
+            }
+
+            if(!roomExists){
+                // Create the room 
+                if(numRooms < MAX_ROOMS){
+
+                    char temp[] = "available";
+                    send(ClientSocket, temp, sizeof(temp), 0);
+
+                    // Create a password
+                    char setPasswordMsg[] = "Enter a password for the new room: ";
+                    send(ClientSocket, setPasswordMsg, sizeof(setPasswordMsg), 0);
+
+                    recv(ClientSocket, roomList[numRooms].password, DEFAULT_BUFLEN, 0);
+
+                    // Initialize the new room
+                    strcpy(roomList[numRooms].room, client->room);
+                    roomList[numRooms].numClients = 0;
+                    numRooms++;
+
+                    // Connect the client to the room
+                    client->connectedToRoom = 1;
+
+                }else{
+                    // Notify the client that the maximum number of rooms is reached
+                    char maxRoomsMsg[] = "Max rooms reached";
+                    send(ClientSocket, maxRoomsMsg, sizeof(maxRoomsMsg), 0);
+                    closesocket(ClientSocket);
+                    return 0;                   
+                }
+            }
+
+
+        }else if (iResult == 0) {
+            printf("Client disconnected while trying to join.\n");
+            break;
+        } else {
+            printf("recv Failed (room availability): %d\n", WSAGetLastError());
+            break;
+        }
+    }
     
     do {
         iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
@@ -255,7 +353,7 @@ unsigned int WINAPI ClientThread(LPVOID lpParam) {
 
             // Broadcast the received message to all other clients
             for (int j = 0; j < numClients; j++) {
-                if (clientList[j].socket != ClientSocket) {
+                if (strcmp(clientList[j].room, client->room) == 0 && clientList[j].socket != ClientSocket) {
 
                     char broadcastMessage[DEFAULT_BUFLEN + DEFAULT_BUFLEN];
 
