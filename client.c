@@ -22,6 +22,7 @@ int printColorText(const char *text, const char *buffer, int colorCode){
 }
 
 int main() {
+
     WSADATA wsaData;
     SOCKET ConnectSocket = INVALID_SOCKET;
     struct sockaddr_in serverAddr;
@@ -105,24 +106,79 @@ int main() {
         iResult = send(ConnectSocket, sendbuf, strlen(sendbuf), 0);
         if (iResult == SOCKET_ERROR) {
             printf("Send room ID failed: %d\n", WSAGetLastError());
-            closesocket(ConnectSocket);
-            WSACleanup();
-            return 1;
+            break;
         }
 
-        // Receive room availability response
+        // Receive room availability response send the password
         iResult = recv(ConnectSocket, recvbuf, 10, 0);
         if (iResult > 0) {
             recvbuf[iResult] = '\0';
-            if (strcmp(recvbuf, "available") == 0) {
-                hasJoinRoom = 1;
-                printf("Welcome. You are now authenticated on Room %s.\n", sendbuf);
-                break;
-            } else {
-                printf("Access denied. Please choose another.\n");
+
+            char password[DEFAULT_BUFLEN];
+            char passwordVerif[DEFAULT_BUFLEN];
+
+            // Case 0: Room doesn't exists 
+            if (strcmp(recvbuf, "0") == 0) {
+
+                printf("Create room: \n");
+                printf("Password: ");
+                fgets(password, DEFAULT_BUFLEN, stdin);
+                printf("Confirm password: ");
+                fgets(passwordVerif, DEFAULT_BUFLEN, stdin);
+
+
+                if (strcmp(password, passwordVerif) == 0){
+                    // Send Password to the server
+                    iResult = send(ConnectSocket, sendbuf, strlen(sendbuf), 0);
+                    if (iResult == SOCKET_ERROR) {
+                        printf("Send password failed: %d\n", WSAGetLastError());
+                        break;
+                    }
+                    // Get response
+                    iResult = recv(ConnectSocket, recvbuf, DEFAULT_BUFLEN, 0);
+                    if (iResult > 0) {
+                        recvbuf[iResult] = '\0';
+                        if (strcmp(recvbuf, "1") == 0) {
+                            printf("Connected to room.\n");
+                            hasJoinRoom = 1;
+                        } else {
+                            printf("Something fail in the room creation process.\n");
+                            break;
+                        }
+                    }
+                }
+            
             }
+            // Case 1: Room already exists 
+            else if (strcmp(recvbuf, "1") == 0) { // Case 1 the room exist
+
+                printf("Password: ");
+                fgets(sendbuf, DEFAULT_BUFLEN, stdin);
+
+                // Send Password to the server
+                iResult = send(ConnectSocket, sendbuf, strlen(sendbuf), 0);
+                if (iResult == SOCKET_ERROR) {
+                    printf("Send password failed: %d\n", WSAGetLastError());
+                    break;
+                }
+
+                // Get response
+                iResult = recv(ConnectSocket, recvbuf, DEFAULT_BUFLEN, 0);
+                if (iResult > 0) {
+                    recvbuf[iResult] = '\0';
+                    if (strcmp(recvbuf, "1") == 0) {
+                        printf("Connected to room.\n");
+                        hasJoinRoom = 1;
+                    } else {
+                        printf("Fail to connect.\n");
+                }
+            }else {
+                printf("Access denied. something went wrong.\n");
+                break;
+            }  
         } else {
             printf("Receive room authorization failed: %d\n", WSAGetLastError());
+            break;
         }
     }
 
@@ -155,6 +211,7 @@ int main() {
     CloseHandle(consoleMutex);
     WSACleanup();
     return 0;
+    }
 }
 
 
@@ -170,11 +227,9 @@ unsigned int WINAPI ReceiveThread(LPVOID lpParam) {
 
             // Lock the mutex to prevent conflicts with console output
             WaitForSingleObject(consoleMutex, INFINITE);
-            
-            // printf("\n%s",recvbuf);
             printColorText("\n",recvbuf, FOREGROUND_BLUE);
+            printf("\n");
             fflush(stdout);
-
             // Release the mutex to allow other threads to access the console
             ReleaseMutex(consoleMutex);
 
@@ -191,9 +246,7 @@ unsigned int WINAPI ReceiveThread(LPVOID lpParam) {
             break;
         } else {
             printf("Receive failed: %d\n", WSAGetLastError());
-            closesocket(ConnectSocket);
-            WSACleanup();
-            return 1;
+            break;
         }
     }
 
@@ -206,21 +259,32 @@ unsigned int WINAPI SendThread(LPVOID lpParam) {
 
     while (1) {
         WaitForSingleObject(consoleMutex, INFINITE);
-        printColorText("You: ","", FOREGROUND_GREEN);
+        printColorText("You: ", "", FOREGROUND_GREEN);
         ReleaseMutex(consoleMutex);
 
         fgets(sendbuf, DEFAULT_BUFLEN, stdin);
         fflush(stdout);
 
-        // Send data to the server
-        int iResult = send(ConnectSocket, sendbuf, strlen(sendbuf), 0);
-        if (iResult == SOCKET_ERROR) {
-            printf("Send failed: %d\n", WSAGetLastError());
-            break;
+        // Trim newline character
+        sendbuf[strcspn(sendbuf, "\n")] = '\0';
+
+        // Send data to the server if message is not empty
+        if (strlen(sendbuf) > 0) {
+            int iResult = send(ConnectSocket, sendbuf, strlen(sendbuf), 0);
+            if (iResult == SOCKET_ERROR) {
+                printf("Send failed: %d\n", WSAGetLastError());
+                break;
+            }
+        } else {
+            WaitForSingleObject(consoleMutex, INFINITE);
+            printf("Message cannot be empty.\n");
+            ReleaseMutex(consoleMutex);
         }
+
         memset(sendbuf, 0, sizeof(sendbuf));
     }
 
     return 0;
 }
+
 

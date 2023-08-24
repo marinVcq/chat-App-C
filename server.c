@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <process.h>
+#include <stdlib.h>
 
 #if (_WIN32_WINNT >= 0x0501)
 void WSAAPI freeaddrinfo (struct addrinfo*);
@@ -21,12 +22,19 @@ int WSAAPI getnameinfo(const struct sockaddr*,socklen_t,char*,DWORD,
 /* FIXME: Need WS protocol-independent API helpers.  */
 #endif
 
+// Constants
 #define DEFAULT_PORT "12345"
 #define DEFAULT_BUFLEN 1024
 #define MAX_CLIENTS 10
 #define MAX_CLIENTS_PER_ROOM 5
 #define MAX_ROOMS 15
+
+// Function declaration
+int InitializeServer();
+SOCKET CreateListeningSocket();
+void AcceptAndHandleClients(SOCKET ListenSocket);
 unsigned int WINAPI ClientThread(LPVOID lpParam);
+int printColorText(const char *text, const char *buffer, int colorCode);
 
 struct clientInfo{
     SOCKET socket;
@@ -44,7 +52,6 @@ struct RoomClients{
 
 struct RoomClients roomList[MAX_ROOMS];
 
-
 WORD wVersionRequested; 
 WSADATA wsaData;
 SOCKET clientSockets[MAX_CLIENTS];
@@ -61,149 +68,22 @@ int recvbuflen = DEFAULT_BUFLEN;
 int numClients = 0;
 int numRooms = 0;
 
-// Function
-int printColorText(const char *text, const char *buffer, int colorCode){
-    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-    SetConsoleTextAttribute(hConsole, colorCode);
-    printf("%s %s",text, buffer);
-    SetConsoleTextAttribute(hConsole, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
-    return 0;
-}
-
 int main(){
 
     for (int i = 0; i < MAX_ROOMS; i++) {
         roomList[i].numClients = 0;
     }
 
-    wVersionRequested = MAKEWORD(2,2);
-    iResult = WSAStartup(wVersionRequested, &wsaData);
-    SOCKET ListenSocket = INVALID_SOCKET;
+    InitializeServer();
+
     SOCKET NewClientSocket = INVALID_SOCKET;
-
-    InitializeCriticalSection(&csClients);
-
-    // Error handling
-    if(iResult != 0){
-        printf("WSAStartup Failed:\n%d\n", iResult);
-        return 1;
-    }
-
-    if(LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2){
-        printf("Winsock DLL not find, Check the requested version\n");
-        WSACleanup();
-        return 1;
-    }
-
-    // 1. Initialization
-    ZeroMemory(&hints, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
-    hints.ai_flags = AI_PASSIVE;
-
-    iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
-
-    if(iResult != 0){
-        printf("getaddrinfo() Failed:\n %d\n", iResult);
-        WSACleanup();
-        return 1;
-    }
-
-    // 2. Create Socket
-    ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if(ListenSocket == INVALID_SOCKET){
-        printf("Error at Socket(): %d", WSAGetLastError());
-        freeaddrinfo(result);
-        WSACleanup();
-        return 1;
-    }
-
-    // Set Socket Option
-    int enable = 1;
-    if(setsockopt(ListenSocket, SOL_SOCKET, SO_REUSEADDR, (const char*)&enable, sizeof(enable)) == SOCKET_ERROR){
-        fprintf(stderr, "setsockopt(SO_REUSEADDR) failed.\n");
+    SOCKET ListenSocket = CreateListeningSocket();
+    if (ListenSocket != INVALID_SOCKET) {
+        AcceptAndHandleClients(ListenSocket);
         closesocket(ListenSocket);
-        WSACleanup();
-        return 1;
     }
 
-    // 3. Bind Socket
-    iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
-    if(iResult == SOCKET_ERROR){
-
-        int error = WSAGetLastError();
-        switch(error) {
-            case 10013:
-                fprintf(stderr, "Bind failed due to permission denied.\n");
-                break;
-            case 10048:
-                fprintf(stderr, "Bind failed due address already in use\n");
-                break;
-            default:
-                fprintf(stderr, "Bind failed with error: %d\n", error);
-        }
-
-        freeaddrinfo(result);
-        closesocket(ListenSocket);
-        WSACleanup();
-        return 1;
-    }else{
-        freeaddrinfo(result);
-    }
-
-    // 4. Listening for incomming client connection
-    if(listen(ListenSocket, SOMAXCONN) == SOCKET_ERROR){
-
-        int error = WSAGetLastError();
-        switch(error) {
-            default:
-                fprintf(stderr, "Listen failed with error: %d\n", error);
-        }
-        closesocket(ListenSocket);
-        WSACleanup();
-        return 1;
-    }
-
-    while(1){
-        // 5. Accepting a client connection
-        NewClientSocket = accept(ListenSocket, NULL, NULL);
-
-        if(NewClientSocket == INVALID_SOCKET){
-            int error = WSAGetLastError();
-            switch(error) {
-                default:
-                    fprintf(stderr, "Accept failed with error: %d\n", error);
-            }
-            continue;
-        }else{
-            EnterCriticalSection(&csClients);
-
-            if(numClients < MAX_CLIENTS){
-                
-                clientList[numClients].socket = NewClientSocket;
-                memset(clientList[numClients].username,0,sizeof(clientList[numClients].username));
-
-                // Create a thread to handle futur connection
-                // Note: _beginThreadex seems more accurate than CreateThread
-                HANDLE hThread = (HANDLE)_beginthreadex(NULL, 0, ClientThread, &clientList[numClients], 0, NULL);
-                // HANDLE hThread = CreateThread(NULL, 0, ClientThread, &clientSockets[numClients], 0, NULL);
-                
-                if(hThread == NULL){
-                    printf("Error creating thread\n");
-                }else{
-                    CloseHandle(hThread);
-                    numClients++;
-                }
-            }else{
-                printf("Max number of clients reached\n");
-                closesocket(NewClientSocket);
-            }
-            LeaveCriticalSection(&csClients);
-        }
-    }
-
-    // 7. Ending connection
+    // Ending connection
     iResult = shutdown(NewClientSocket, SD_SEND);
     if(iResult == SOCKET_ERROR){
         printf("shutdown Failed: %d\n", WSAGetLastError());
@@ -218,6 +98,7 @@ int main(){
 }
 
 unsigned int WINAPI ClientThread(LPVOID lpParam) {
+
     struct clientInfo* client = (struct clientInfo*)lpParam;
     SOCKET ClientSocket = *((SOCKET*)lpParam);
 
@@ -273,29 +154,31 @@ unsigned int WINAPI ClientThread(LPVOID lpParam) {
 
             // check if room already exist
             for(int i=0;i<numRooms; i++){
-                if(strcmp(roomList[i].room, client->room) == 0){
-                    roomExists = 1;
 
-                    char temp[] = "available";
+                // Case 1: Room exist
+                if(strcmp(roomList[i].room, client->room) == 0){
+
+                    roomExists = 1;
+                    char temp[] = "1";
                     send(ClientSocket, temp, sizeof(temp), 0);
                     
                     while(!passwordOK){
-                        // If the room exists, ask for the password
-                        char passwordPrompt[] = "Enter room password: ";
-                        send(ClientSocket, passwordPrompt, sizeof(passwordPrompt), 0);
-
+                        
+                        // Receive password from client
                         char receivedPassword[DEFAULT_BUFLEN];
                         recv(ClientSocket, receivedPassword, DEFAULT_BUFLEN, 0);
 
+                        // Check password
                         if (strcmp(receivedPassword, roomList[i].password) == 0) {
-                            // Password matches, connect the client to the room
+
+                            // Password matches, connect client to room
                             client->connectedToRoom = 1;
-                            char serverResponse[] = "Connected";
+                            char serverResponse[] = "1";
                             send(ClientSocket, serverResponse, sizeof(serverResponse), 0);
                             passwordOK = 1;
                         } else {
-                            // Password doesn't match, close the connection
-                            char incorrectPasswordMsg[] = "Incorrect password";
+                            // Password doesn't match
+                            char incorrectPasswordMsg[] = "0";
                             send(ClientSocket, incorrectPasswordMsg, sizeof(incorrectPasswordMsg), 0);
                         }
                     }
@@ -307,12 +190,8 @@ unsigned int WINAPI ClientThread(LPVOID lpParam) {
                 // Create the room 
                 if(numRooms < MAX_ROOMS){
 
-                    char temp[] = "available";
+                    char *temp = "0";
                     send(ClientSocket, temp, sizeof(temp), 0);
-
-                    // Create a password
-                    char setPasswordMsg[] = "Enter a password for the new room: ";
-                    send(ClientSocket, setPasswordMsg, sizeof(setPasswordMsg), 0);
 
                     recv(ClientSocket, roomList[numRooms].password, DEFAULT_BUFLEN, 0);
 
@@ -323,6 +202,10 @@ unsigned int WINAPI ClientThread(LPVOID lpParam) {
 
                     // Connect the client to the room
                     client->connectedToRoom = 1;
+                    
+                    // Send Success process
+                    temp = "1";
+                    send(ClientSocket, temp, sizeof(temp), 0);
 
                 }else{
                     // Notify the client that the maximum number of rooms is reached
@@ -348,7 +231,6 @@ unsigned int WINAPI ClientThread(LPVOID lpParam) {
 
         if (iResult > 0) {
             recvbuf[iResult] = '\0'; // Ensure proper null-termination
-            // printf("Received Message: %s\n", recvbuf);
             printColorText("Received Message: ",recvbuf, FOREGROUND_GREEN);
 
             // Broadcast the received message to all other clients
@@ -398,5 +280,141 @@ unsigned int WINAPI ClientThread(LPVOID lpParam) {
     // Close the client socket and exit the thread
     DeleteCriticalSection(&csClients);
     closesocket(ClientSocket);
+    return 0;
+}
+
+int InitializeServer() {
+    // Initialize Winsock
+    int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (iResult != 0) {
+        printf("WSAStartup failed: %d\n", iResult);
+        exit(1);
+    }
+    if(LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2){
+        printf("Winsock DLL not find, Check the requested version\n");
+        WSACleanup();
+        return 1;
+    }else{
+        printf("The Winsock 2.2 dll was found okay\n");        
+    }
+
+    // Initialize critical section for thread safety
+    InitializeCriticalSection(&csClients);
+    return 0;
+}
+
+void CleanupServer() {
+    // Cleanup resources
+    WSACleanup();
+    DeleteCriticalSection(&csClients);
+}
+
+SOCKET CreateListeningSocket() {
+    SOCKET ListenSocket = INVALID_SOCKET;
+
+    struct addrinfo hints;
+    struct addrinfo* result = NULL;
+
+    ZeroMemory(&hints, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = AI_PASSIVE;
+
+    int iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
+    if (iResult != 0) {
+        printf("getaddrinfo failed: %d\n", iResult);
+        return INVALID_SOCKET;
+    }
+
+    // Create the socket
+    ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    if (ListenSocket == INVALID_SOCKET) {
+        printf("Error at socket: %d\n", WSAGetLastError());
+        freeaddrinfo(result);
+        return INVALID_SOCKET;
+    }
+
+    // Set Socket Option
+    int enable = 1;
+    if (setsockopt(ListenSocket, SOL_SOCKET, SO_REUSEADDR, (const char*)&enable, sizeof(enable)) == SOCKET_ERROR) {
+        printf("setsockopt failed with error: %d\n", WSAGetLastError());
+        closesocket(ListenSocket);
+        freeaddrinfo(result);
+        return INVALID_SOCKET;
+    }
+
+    // Bind socket
+    iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
+    if(iResult == SOCKET_ERROR){
+
+        int error = WSAGetLastError();
+        switch(error) {
+            case 10013:
+                fprintf(stderr, "Bind failed due to permission denied.\n");
+                break;
+            case 10048:
+                fprintf(stderr, "Bind failed due address already in use\n");
+                break;
+            default:
+                fprintf(stderr, "Bind failed with error: %d\n", error);
+        }
+
+        freeaddrinfo(result);
+        closesocket(ListenSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    freeaddrinfo(result);
+
+    // Set Listening
+    iResult = listen(ListenSocket, SOMAXCONN);
+    if (iResult == SOCKET_ERROR) {
+        printf("listen failed with error: %d\n", WSAGetLastError());
+        closesocket(ListenSocket);
+        return INVALID_SOCKET;
+    }
+
+    return ListenSocket;
+}
+
+void AcceptAndHandleClients(SOCKET ListenSocket) {
+    while (1) {
+        SOCKET NewClientSocket = accept(ListenSocket, NULL, NULL);
+        if (NewClientSocket == INVALID_SOCKET) {
+            printf("accept failed with error: %d\n", WSAGetLastError());
+            continue;
+        }
+
+        EnterCriticalSection(&csClients);
+
+        if (numClients < MAX_CLIENTS) {
+            clientList[numClients].socket = NewClientSocket;
+            memset(clientList[numClients].username,0,sizeof(clientList[numClients].username));
+
+            // Create a thread to handle the new client connection
+            HANDLE hThread = (HANDLE)_beginthreadex(NULL, 0, ClientThread, &clientList[numClients], 0, NULL);
+            if (hThread == NULL) {
+                printf("Error creating thread for client\n");
+                closesocket(NewClientSocket);
+            } else {
+                CloseHandle(hThread);
+                numClients++;
+            }
+        } else {
+            printf("Max number of clients reached\n");
+            closesocket(NewClientSocket);
+        }
+
+        LeaveCriticalSection(&csClients);
+    }
+}
+
+int printColorText(const char *text, const char *buffer, int colorCode){
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetConsoleTextAttribute(hConsole, colorCode);
+    printf("%s %s\n",text, buffer);
+    SetConsoleTextAttribute(hConsole, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
     return 0;
 }
