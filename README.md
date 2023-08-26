@@ -5,7 +5,11 @@ There are two types of socket network applications: Server and Client
 
 - server shtudown when user disconnected: Fixed by terminate the client thread if this one disconnected
 - set cursor pointer on hover to the login button
-- 
+- handle empty username Fixed by checking empty string in WM_COMMAND
+- Fix color for error container
+- If user disconnect, his username should be free and numClient--
+- inform user when the max of user number is reached
+- At room creation: not push in list. users can't join
 
 ## Abstract and weird things
 

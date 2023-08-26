@@ -9,7 +9,7 @@
 
 // Controls ID
 #define ID_SUBMIT_USERNAME 1001
-#define ID_SUBMIT_ROOM 1002
+#define ID_JOIN_ROOM 1002
 #define ID_CREATE_ROOM 1003
 #define ID_VALIDATE_ROOM_CREATION 1004
 #define ID_SUBMIT_CHAT 1005
@@ -21,9 +21,9 @@ unsigned int WINAPI SendThread(LPVOID lpParam);
 // Global variables
 HANDLE recvThread, sendThread;
 HWND hTopLabel, hUsernameEdit,hUsernameLabel, hSubmitButton, hErrorContainer,hDescriptionLabel, hKeyFeatures,
-hImageControl, hUsernameContainer;
+hImageControl, hInputContainer;
 
-HWND hRoomIdEdit, hPasswordEdit, hSubmitButton, hRoomError, hPasswordInputLabel,
+HWND hRoomIdEdit, hPasswordEdit, hSubmitButton, hRoomError, hPasswordInputLabel,hRoomInfo,
 hCreateRoomButton, hRoomInputLabel, hPasswordVerifEdit, hPasswordCheckInputLabel;
 HFONT hFont, hHeaderH1Font;
 HWND hSubmitButtonChat, hInputText, hChatText;
@@ -53,24 +53,28 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             // Create Login Controls
             hTopLabel = CreateWindow("STATIC", welcome, WS_VISIBLE | WS_CHILD | SS_CENTER,50, 20, 450, 30, hwnd, NULL, NULL, NULL);
             hDescriptionLabel = CreateWindow("STATIC",description, WS_VISIBLE | WS_CHILD | SS_CENTER,50, 60, 450, 50, hwnd, NULL, NULL, NULL);
-            hUsernameContainer = CreateWindow("STATIC", "", WS_VISIBLE | WS_CHILD | WS_BORDER, 175, 140, 200, 110, hwnd, NULL, NULL, NULL);
-            hUsernameLabel = CreateWindow("STATIC","Username: ", WS_VISIBLE | WS_CHILD | SS_CENTER,10, 10, 70, 20, hUsernameContainer, NULL, NULL, NULL);
-            hUsernameEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_BORDER,10, 40, 180, 30, hUsernameContainer, NULL, NULL, NULL);
-            hErrorContainer = CreateWindow("STATIC", "", WS_VISIBLE | WS_CHILD,10, 80, 180, 20, hUsernameContainer, NULL, NULL, NULL);
-            
+            hInputContainer = CreateWindow("STATIC", "", WS_VISIBLE | WS_CHILD | WS_BORDER, 175, 140, 200, 110, hwnd, NULL, NULL, NULL);
+            hUsernameLabel = CreateWindow("STATIC","Username: ", WS_VISIBLE | WS_CHILD | SS_CENTER,10, 10, 70, 20, hInputContainer, NULL, NULL, NULL);
+            hUsernameEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_BORDER,10, 40, 180, 30, hInputContainer, NULL, NULL, NULL);
+            hErrorContainer = CreateWindow("STATIC", "", WS_VISIBLE | WS_CHILD,10, 80, 180, 20, hInputContainer, NULL, NULL, NULL);
             hSubmitButton = CreateWindow("BUTTON", "Let's Go!", WS_VISIBLE | WS_CHILD,275, 260, 100, 30, hwnd, (HMENU)ID_SUBMIT_USERNAME, NULL, NULL);
             hKeyFeatures = CreateWindow("STATIC",keyFeatures, WS_VISIBLE | WS_CHILD | SS_LEFT,50, 340, 450, 180, hwnd, NULL, NULL, NULL);
 
             // Set design parameters
             SendMessage(hTopLabel, WM_SETFONT, (WPARAM)hHeaderH1Font, MAKELPARAM(TRUE, 0));
             SendMessage(hDescriptionLabel, WM_SETFONT, (WPARAM)hFont, MAKELPARAM(TRUE, 0));
+            SendMessage(hUsernameLabel, WM_SETFONT, (WPARAM)hFont, MAKELPARAM(TRUE, 0));
             SendMessage(hKeyFeatures, WM_SETFONT, (WPARAM)hFont, MAKELPARAM(TRUE, 0));
             SendMessage(hErrorContainer, WM_SETFONT, (WPARAM)hFont, MAKELPARAM(TRUE, 0));
-            SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)""); // Clear initial text
+            SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)""); // Clear error label
             break;
 
         case WM_SETCURSOR:
             if ((HWND)wParam == hSubmitButton) {
+                SetCursor(LoadCursor(NULL, IDC_HAND));
+                return TRUE;
+            }
+            if ((HWND)wParam == hCreateRoomButton) {
                 SetCursor(LoadCursor(NULL, IDC_HAND));
                 return TRUE;
             }
@@ -82,112 +86,118 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 // Set text color to red
                 SetTextColor((HDC)wParam, RGB(255, 0, 0));
                 // Use a transparent background brush for the error label
-                hBrushErrorLabel = (HBRUSH)GetStockObject(NULL_BRUSH);
-                return (LRESULT)hBrushErrorLabel;
+                SetBkMode((HDC)wParam, TRANSPARENT);
+                return (LRESULT)GetStockObject(NULL_BRUSH);
             }
             break;
 
 
         case WM_COMMAND:
+            // COMMAND: SUBMIT USERNAME
             if (LOWORD(wParam) == ID_SUBMIT_USERNAME) {
-                MessageBox(hwnd, "Submit button clicked!", "Button Click", MB_OK);
+
                 GetWindowText(hUsernameEdit, username, sizeof(username));
-                printf("%s",username);
+
+                // Check for empty string
+                if (strcmp(username, "") == 0){
+                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Username cannot be empty.");
+                    break;
+                }else{
+                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"");
+                }
 
                 // Send username to server
                 iResult = send(ConnectSocket, username, strlen(username), 0);
                 if (iResult == SOCKET_ERROR) {
                     SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Error sending username");
-                    printf("Send username failed: %d\n", WSAGetLastError());
-                }else{
-                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"");
+                    break;
                 }
 
-                // Receive username availability response
+                // Wait for username availability response
                 iResult = recv(ConnectSocket, recvbuf, 10, 0);
                 if (iResult > 0) {
                     recvbuf[iResult] = '\0';
-                    if (strcmp(recvbuf, "available") == 0) {
+                    if (strcmp(recvbuf, "1") == 0) {
                         usernameAvailable = 1;
-                        printf("Username available. You are now authenticated.\n");
+                        SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Username succesfully created");
+
                     } else {
-                        SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Username is taken. Please choose another.");
+                        SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Username already taken");
                     }
                 } else {
                     SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Receive username availability failed.");
-                    printf("Receive username availability failed: %d\n", WSAGetLastError());
                 }
 
-                // If username is available, show room ID and password controls
+                // If username available, set up next controls
                 if (usernameAvailable) {
                     
                     // Destroy previous controls (username input and submit button)
+                    DestroyWindow(hTopLabel);
+                    DestroyWindow(hDescriptionLabel);
+                    DestroyWindow(hInputContainer);
+                    DestroyWindow(hUsernameLabel);
                     DestroyWindow(hUsernameEdit);
                     DestroyWindow(hSubmitButton);
                     DestroyWindow(hErrorContainer);
-                    DestroyWindow(hTopLabel);
+                    DestroyWindow(hKeyFeatures);
 
-                    hTopLabel = CreateWindow("STATIC", "Connection to room", WS_VISIBLE | WS_CHILD,
-                        50, 20, 200, 20, hwnd, NULL, NULL, NULL);
+                    hTopLabel = CreateWindow("STATIC", "Join or Create room", WS_VISIBLE | WS_CHILD | SS_CENTER,50, 20, 450, 30, hwnd, NULL, NULL, NULL);
+                    hInputContainer = CreateWindow("STATIC", "", WS_VISIBLE | WS_CHILD | WS_BORDER, 125, 70, 300, 180, hwnd, NULL, NULL, NULL);
+                    hRoomInputLabel = CreateWindow("STATIC", "Room ID:", WS_VISIBLE | WS_CHILD,50, 20, 200, 20, hInputContainer, NULL, NULL, NULL);
+                    hRoomIdEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_BORDER,50, 45, 200, 30, hInputContainer, NULL, NULL, NULL);
+                    hPasswordInputLabel = CreateWindow("STATIC", "Password: ", WS_VISIBLE | WS_CHILD,50, 85, 200, 20, hInputContainer, NULL, NULL, NULL);
+                    hPasswordEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_PASSWORD,50, 110, 200, 30, hInputContainer, NULL, NULL, NULL);
+                    hErrorContainer = CreateWindow("STATIC", "This is an error.", WS_VISIBLE | WS_CHILD,50, 150, 200, 20, hInputContainer, NULL, NULL, NULL);
+                    hSubmitButton = CreateWindow("BUTTON", "Join", WS_VISIBLE | WS_CHILD, 220, 260, 100, 30, hwnd, (HMENU)ID_JOIN_ROOM, NULL, NULL);
+                    hCreateRoomButton = CreateWindow("BUTTON", "Create Room", WS_VISIBLE | WS_CHILD, 325, 260, 100, 30, hwnd, (HMENU)ID_CREATE_ROOM, NULL, NULL);
+                    hRoomInfo = CreateWindow("STATIC", roomInfo, WS_VISIBLE | WS_CHILD | SS_LEFT | ES_AUTOVSCROLL ,50, 300, 450, 240, hwnd, NULL, NULL, NULL);
 
-                    // Create room ID input field
-                    hRoomInputLabel = CreateWindow("STATIC", "Room ID: ", WS_VISIBLE | WS_CHILD,
-                        50, 50, 200, 20, hwnd, NULL, NULL, NULL);
-                    hRoomIdEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_BORDER,
-                        50, 70, 200, 30, hwnd, NULL, NULL, NULL);
-
-                    // Create password input field
-                    hPasswordInputLabel = CreateWindow("STATIC", "Password: ", WS_VISIBLE | WS_CHILD,
-                        50, 100, 200, 20, hwnd, NULL, NULL, NULL);
-                    hPasswordEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_PASSWORD,
-                        50, 120, 200, 30, hwnd, NULL, NULL, NULL);
-
-                    // Create Submit button
-                    hSubmitButton = CreateWindow("BUTTON", "Submit", WS_VISIBLE | WS_CHILD,
-                        50, 150, 200, 30, hwnd, (HMENU)ID_SUBMIT_ROOM, NULL, NULL);
-
-                    // Create room button
-                    hCreateRoomButton = CreateWindow("BUTTON", "Create Room", WS_VISIBLE | WS_CHILD,
-                        50, 180, 200, 30, hwnd, (HMENU)ID_CREATE_ROOM, NULL, NULL);
-                    
-                    // Create error label
-                    hRoomError = CreateWindow("STATIC", "", WS_VISIBLE | WS_CHILD,
-                        50, 210, 200, 20, hwnd, NULL, NULL, NULL);
-
-                    // Modify UI elements to prompt for room ID and password
-                    SetWindowText(hRoomError, ""); // Clear previous error text
+                    // Set controls parameters
+                    SendMessage(hTopLabel, WM_SETFONT, (WPARAM)hHeaderH1Font, MAKELPARAM(TRUE, 0));
+                    SendMessage(hRoomInfo, WM_SETFONT, (WPARAM)hFont, MAKELPARAM(TRUE, 0));
+                    SendMessage(hRoomInputLabel, WM_SETFONT, (WPARAM)hFont, MAKELPARAM(TRUE, 0));
+                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)""); // Clear error label
 
                     // Invalidate the window to trigger repainting
                     InvalidateRect(hwnd, NULL, TRUE);
                 }
                 break;
             }
-            else if (LOWORD(wParam) == ID_SUBMIT_ROOM) {
-                char roomId[DEFAULT_BUFLEN];
-                char password[DEFAULT_BUFLEN];
+            // COMMAND: JOIN ROOM
+            else if (LOWORD(wParam) == ID_JOIN_ROOM) {
+
                 GetWindowText(hRoomIdEdit, roomId, sizeof(roomId));
                 GetWindowText(hPasswordEdit, password, sizeof(password));
+
+                // Check for empty input
+                if(strcmp(roomId, "") == 0 || strcmp(password, "") == 0){
+                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Please, fill all inputs.");
+                    break;
+                }else{
+                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"");
+                }
 
                 // Send room ID to the server
                 iResult = send(ConnectSocket, roomId, strlen(roomId), 0);
                 if (iResult == SOCKET_ERROR) {
-                    SendMessage(hRoomError, WM_SETTEXT, 0, (LPARAM)"Send room ID failed.");
+                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Send room ID failed.");
                 }
 
                 // Receive room availability response send the password
                 iResult = recv(ConnectSocket, recvbuf, 10, 0);
                 if (iResult > 0) {
                     recvbuf[iResult] = '\0';
+                    printf("try to connect and get response: %s\n", recvbuf);
 
                     if (strcmp(recvbuf, "0") == 0) {
-                        SendMessage(hRoomError, WM_SETTEXT, 0, (LPARAM)"Provide an existing Room ID.");
+                        SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Provide an existing Room ID.");
                     }
                     else if (strcmp(recvbuf, "1") == 0) {
-                        printf("Room exist\n");
+
                         // Send Password to the server
                         iResult = send(ConnectSocket, password, strlen(password), 0);
                         if (iResult == SOCKET_ERROR) {
-                            SendMessage(hRoomError, WM_SETTEXT, 0, (LPARAM)"Send Password failed.");
+                            SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Send Password Failed.");
                         }                
                         
                         // Get response
@@ -195,7 +205,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         if (iResult > 0) {
                             recvbuf[iResult] = '\0';
                             if (strcmp(recvbuf, "1") == 0) {
-                                printf("connected to room\n");
+
                                 // Set dialogue Box
                                 // Destroy previous controls (username input and submit button)
                                 DestroyWindow(hRoomIdEdit);
@@ -216,7 +226,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                                     25, 260, 250, 20, hwnd, NULL, NULL, NULL);
                                 hSubmitButtonChat = CreateWindow("BUTTON", "Send", WS_VISIBLE | WS_CHILD,
                                     300, 260, 50, 20, hwnd, (HMENU)ID_SUBMIT_CHAT, NULL, NULL);
-                                MoveWindow(hRoomError, 25, 310, 250, 30, TRUE);
+                                MoveWindow(hErrorContainer, 25, 310, 250, 30, TRUE);
 
                                 // Start the receiving thread for chat messages
                                 recvThread = (HANDLE)_beginthreadex(NULL, 0, ReceiveThread, &ConnectSocket, 0, NULL);
@@ -225,58 +235,66 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                                     // ...
                                 }
                             } else {
-                                SendMessage(hRoomError, WM_SETTEXT, 0, (LPARAM)"Fail to connect.");
+                                SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Fail to connect.");
                             }
                         }
                     }else {
-                        SendMessage(hRoomError, WM_SETTEXT, 0, (LPARAM)"Access denied. something went wrong.");
+                        SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Access denied. something went wrong.");
                     } 
                 }else {
-                    SendMessage(hRoomError, WM_SETTEXT, 0, (LPARAM)"Receive room authorization failed");
+                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Receive room authorization failed");
                 }
             }
-            // Create Room 
+            // COMMAND: CREATE ROOM
             else if (LOWORD(wParam) == ID_CREATE_ROOM) {
 
                 char temp[] = "create room";
                 // Inform server about room creation process
                 iResult = send(ConnectSocket, temp, strlen(temp), 0);
                 if (iResult == SOCKET_ERROR) {
-                    SendMessage(hRoomError, WM_SETTEXT, 0, (LPARAM)"Send create room request failed.");
+                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Send create room request failed.");
                 }
 
                 // Destroy previous controls (username input and submit button)
                 DestroyWindow(hSubmitButton);
                 DestroyWindow(hCreateRoomButton);
                 DestroyWindow(hTopLabel);
+                DestroyWindow(hRoomInfo);
 
-                // Create control 
-                hTopLabel = CreateWindow("STATIC", "Create room:", WS_VISIBLE | WS_CHILD,
-                        50, 20, 200, 20, hwnd, NULL, NULL, NULL);
+                // Create controls
+                hTopLabel = CreateWindow("STATIC", "Create room:", WS_VISIBLE | WS_CHILD | SS_CENTER,50, 20, 450, 30, hwnd, NULL, NULL, NULL);
+                hPasswordCheckInputLabel = CreateWindow("STATIC", "Check Password: ", WS_VISIBLE | WS_CHILD,50, 150, 200, 20, hInputContainer, NULL, NULL, NULL);
+                hPasswordVerifEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_PASSWORD,50, 170, 200, 30, hInputContainer, NULL, NULL, NULL);
+                hCreateRoomButton = CreateWindow("BUTTON", "Validate", WS_VISIBLE | WS_CHILD,325,330, 100, 30, hwnd, (HMENU)ID_VALIDATE_ROOM_CREATION, NULL, NULL);
+                
+                MoveWindow(hErrorContainer, 50, 220, 200, 30, TRUE);
+                MoveWindow(hInputContainer,  125, 70, 300, 250, TRUE);
 
-                // Create password input field
-                hPasswordCheckInputLabel = CreateWindow("STATIC", "Check Password: ", WS_VISIBLE | WS_CHILD,
-                    50, 150, 200, 20, hwnd, NULL, NULL, NULL);
-                hPasswordVerifEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_PASSWORD,
-                    50, 170, 200, 30, hwnd, NULL, NULL, NULL);
-
-                // Create room button
-                hCreateRoomButton = CreateWindow("BUTTON", "Validate", WS_VISIBLE | WS_CHILD,
-                    50, 210, 200, 30, hwnd, (HMENU)ID_VALIDATE_ROOM_CREATION, NULL, NULL);
-
-                MoveWindow(hRoomError, 50, 250, 200, 30, TRUE);
+                // Set control parameters
+                SendMessage(hTopLabel, WM_SETFONT, (WPARAM)hHeaderH1Font, MAKELPARAM(TRUE, 0));
+                SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)""); // Clear error label
             } 
             
             // Room creation
             else if(LOWORD(wParam) == ID_VALIDATE_ROOM_CREATION){
+
                 GetWindowText(hRoomIdEdit, roomId, sizeof(roomId));
                 GetWindowText(hPasswordEdit, password, sizeof(password));
                 GetWindowText(hPasswordVerifEdit, passwordVerif, sizeof(passwordVerif));
 
+                // Check for empty input
+                if(strcmp(roomId, "") == 0 || strcmp(password, "") == 0 || strcmp(passwordVerif, "") == 0 ){
+                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Please, fill all inputs.");
+                    break;
+                }else{
+                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"");
+                }
+
                 // Send room ID to server
                 iResult = send(ConnectSocket, roomId, strlen(roomId), 0);
                 if (iResult == SOCKET_ERROR) {
-                    SendMessage(hRoomError, WM_SETTEXT, 0, (LPARAM)"Send room ID failed.");
+                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Send room ID failed.");
+                    break;
                 }
                 
                 // Send Password to the server
@@ -321,12 +339,19 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                                 // ...
                             }
 
-                        } else {
+                        } 
+                        else if(strcmp(recvbuf, "1") == 0){
+                            SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Room already exist.");
+                            break;
+                        }
+                        else {
                             printf("Something fail in the room creation process.\n");
                             break;
                         }
                     }
-                }                    
+                }else{
+                    SendMessage(hErrorContainer, WM_SETTEXT, 0, (LPARAM)"Password not match.");
+                }                   
             }
             else if(LOWORD(wParam) == ID_SUBMIT_CHAT){
                 char chatMessage[DEFAULT_BUFLEN];
@@ -370,7 +395,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         MessageBox(NULL, "WSAStartup failed", "Error", MB_ICONERROR);
         return 1;
     }else{
-        MessageBox(NULL, "WSAStartup okay", "info",  MB_OK);
+        //MessageBox(NULL, "WSAStartup okay", "info",  MB_OK);
     }
 
    // Create a socket
