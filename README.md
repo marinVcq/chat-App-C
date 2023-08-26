@@ -1,6 +1,12 @@
 # Winsock application
 There are two types of socket network applications: Server and Client
 
+## To FIX
+
+- server shtudown when user disconnected: Fixed by terminate the client thread if this one disconnected
+- set cursor pointer on hover to the login button
+- 
+
 ## Abstract and weird things
 
 The Winsock2.h header file internally includes core elements from the Windows.h header file, so there is not usually an #include line for the Windows.h header file in Winsock applications. If an #include line is needed for the Windows.h header file, this should be preceded with the #define WIN32_LEAN_AND_MEAN macro. For historical reasons, the Windows.h header defaults to including the Winsock.h header file for Windows Sockets 1.1. The declarations in the Winsock.h header file will conflict with the declarations in the Winsock2.h header file required by Windows Sockets 2.0. The WIN32_LEAN_AND_MEAN macro prevents the Winsock.h from being included by the Windows.h header.
